@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/docker/model-runner/pkg/distribution/types"
 	"github.com/docker/model-runner/pkg/inference"
@@ -17,9 +18,7 @@ type Config struct {
 
 // NewDefaultSGLangConfig creates a new SGLangConfig with default values.
 func NewDefaultSGLangConfig() *Config {
-	return &Config{
-		Args: []string{},
-	}
+	return &Config{}
 }
 
 // GetArgs implements BackendConfig.GetArgs.
@@ -30,14 +29,12 @@ func (c *Config) GetArgs(bundle types.ModelBundle, socket string, mode inference
 	// SGLang uses Python module: python -m sglang.launch_server
 	args = append(args, "-m", "sglang.launch_server")
 
-	// Add model path (SGLang works with safetensors format)
+	// Add model path
 	safetensorsPath := bundle.SafetensorsPath()
 	if safetensorsPath == "" {
 		return nil, fmt.Errorf("safetensors path required by SGLang backend")
 	}
 	modelPath := filepath.Dir(safetensorsPath)
-
-	// Add model path argument
 	args = append(args, "--model-path", modelPath)
 
 	// Add socket arguments
@@ -48,11 +45,8 @@ func (c *Config) GetArgs(bundle types.ModelBundle, socket string, mode inference
 	case inference.BackendModeCompletion:
 		// Default mode for SGLang
 	case inference.BackendModeEmbedding:
-		// SGLang supports embedding models via --is-embedding flag
 		args = append(args, "--is-embedding")
 	case inference.BackendModeReranking:
-		// SGLang may not support reranking mode yet
-		return nil, fmt.Errorf("reranking mode not supported by SGLang backend")
 	default:
 		return nil, fmt.Errorf("unsupported backend mode %q", mode)
 	}

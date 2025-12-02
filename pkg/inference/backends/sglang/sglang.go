@@ -23,9 +23,14 @@ const (
 	// Name is the backend name.
 	Name      = "sglang"
 	sglangDir = "/opt/sglang-env/bin"
+	sglangVersionFile = "/opt/sglang-env/version"
 )
 
-var ErrorNotFound = errors.New("SGLang binary not found")
+var (
+	ErrNotImplemented = errors.New("not implemented")
+	ErrSGLangNotFound  = errors.New("sglang package not installed")
+	ErrPythonNotFound  = errors.New("python3 not found in PATH")
+)
 
 // sglang is the SGLang-based backend implementation.
 type sglang struct {
@@ -70,63 +75,73 @@ func (s *sglang) UsesExternalModelManagement() bool {
 
 func (s *sglang) Install(_ context.Context, _ *http.Client) error {
 	if !platform.SupportsSGLang() {
-		return errors.New("not implemented")
+		return ErrNotImplemented
 	}
 
-	// Check if we're in Docker environment with pre-installed SGLang
-	sglangBinaryPath := s.binaryPath()
-	if _, statErr := os.Stat(sglangBinaryPath); statErr == nil {
-		// Docker environment - check version from file
-		versionPath := filepath.Join(filepath.Dir(sglangDir), "version")
-		versionBytes, err := os.ReadFile(versionPath)
-		if err != nil {
-			s.log.Warnf("could not get sglang version: %v", err)
-			s.status = "running sglang version: unknown"
-		} else {
-			s.status = fmt.Sprintf("running sglang version: %s", strings.TrimSpace(string(versionBytes)))
-		}
+	if err := s.initFromDocker(); err == nil {
 		return nil
-	} else if !errors.Is(statErr, fs.ErrNotExist) {
-		// Host environment - some other error checking binary
-		return fmt.Errorf("failed to check SGLang binary: %w", statErr)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("failed to check SGLang binary: %w", err)
 	}
 
-	// Host environment - check for Python and sglang package
+	return s.initFromHost()
+}
 
-	// Look for python3
+
+func (s *sglang) initFromDocker() error {
+	sglangBinaryPath := s.binaryPath()
+
+	if _, err := os.Stat(sglangBinaryPath); err != nil {
+		return err
+	}
+
+	versionBytes, err := os.ReadFile(sglangVersionFile)
+	if err != nil {
+		s.log.Warnf("could not get sglang version: %v", err)
+		s.status = "running sglang version: unknown"
+		return nil
+	}
+
+	s.status = fmt.Sprintf(
+		"running sglang version: %s",
+		strings.TrimSpace(string(versionBytes)),
+	)
+
+	return nil
+}
+
+
+func (s *sglang) initFromHost() error {
 	pythonPath, err := exec.LookPath("python3")
 	if err != nil {
-		s.status = ErrorNotFound.Error()
-		return ErrorNotFound
+		s.status = ErrPythonNotFound.Error()
+		return ErrPythonNotFound
 	}
 
 	s.pythonPath = pythonPath
 
-	// Check if sglang package is installed
-	cmd := exec.Command(pythonPath, "-c", "import sglang")
-	if err := cmd.Run(); err != nil {
+	if err := exec.Command(pythonPath, "-c", "import sglang").Run(); err != nil {
 		s.status = "sglang package not installed"
-		s.log.Warnf("sglang package not found. Install with: pip install sglang[all]")
-		return fmt.Errorf("sglang package not installed: %w", err)
+		s.log.Warnf("sglang package not found. Install with: uv pip install sglang[all]")
+		return ErrSGLangNotFound
 	}
 
-	// Get SGLang version
-	cmd = exec.Command(pythonPath, "-c", "import sglang; print(sglang.__version__)")
-	output, err := cmd.Output()
+	output, err := exec.Command(pythonPath, "-c", "import sglang; print(sglang.__version__)").Output()
 	if err != nil {
 		s.log.Warnf("could not get sglang version: %v", err)
 		s.status = "running sglang version: unknown"
-	} else {
-		s.status = fmt.Sprintf("running sglang version: %s", strings.TrimSpace(string(output)))
+		return nil
 	}
+
+	s.status = fmt.Sprintf("running sglang version: %s", strings.TrimSpace(string(output)))
 
 	return nil
 }
 
 func (s *sglang) Run(ctx context.Context, socket, model string, modelRef string, mode inference.BackendMode, backendConfig *inference.BackendConfiguration) error {
 	if !platform.SupportsSGLang() {
-		s.log.Warn("SGLang backend is not yet supported")
-		return errors.New("not implemented")
+		s.log.Warn("sglang backend is not yet supported")
+		return ErrNotImplemented
 	}
 
 	bundle, err := s.modelManager.GetBundle(model)
@@ -139,14 +154,22 @@ func (s *sglang) Run(ctx context.Context, socket, model string, modelRef string,
 		return fmt.Errorf("failed to get SGLang arguments: %w", err)
 	}
 
-	// Add served model name
-	args = append(args, "--served-model-name", model, modelRef)
+	// Add served model name and weight version
+	if model != "" {
+		args = append(args, "--served-model-name", model)
+	}
+	if modelRef != "" {
+		args = append(args, "--weight-version", modelRef)
+	}
 
 	// Determine binary path - use Docker installation if available, otherwise use Python
 	binaryPath := s.binaryPath()
 	sandboxPath := sglangDir
 	if _, err := os.Stat(binaryPath); errors.Is(err, fs.ErrNotExist) {
 		// Use Python installation
+		if s.pythonPath == "" {
+			return fmt.Errorf("sglang: no docker binary at %s and no python runtime configured; did you forget to call Install?", binaryPath)
+		}
 		binaryPath = s.pythonPath
 		sandboxPath = ""
 	}
@@ -172,21 +195,20 @@ func (s *sglang) GetDiskUsage() (int64, error) {
 	if _, err := os.Stat(sglangDir); err == nil {
 		size, err := diskusage.Size(sglangDir)
 		if err != nil {
-			return 0, fmt.Errorf("error while getting store size: %w", err)
+			return 0, fmt.Errorf("error while getting sglang dir size: %w", err)
 		}
 		return size, nil
 	}
-	// Python installation doesn't have a dedicated directory
+	// Python installation doesn't have a dedicated installation directory
+	// It's installed via pip in the system Python environment
 	return 0, nil
 }
 
 func (s *sglang) GetRequiredMemoryForModel(_ context.Context, _ string, _ *inference.BackendConfiguration) (inference.RequiredMemory, error) {
 	if !platform.SupportsSGLang() {
-		return inference.RequiredMemory{}, errors.New("not implemented")
+		return inference.RequiredMemory{}, ErrNotImplemented
 	}
 
-	// SGLang has similar memory requirements to vLLM
-	// TODO: Implement accurate memory estimation based on model size
 	return inference.RequiredMemory{
 		RAM:  1,
 		VRAM: 1,
