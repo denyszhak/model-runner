@@ -2,9 +2,9 @@ package sglang
 
 import (
 	"fmt"
+	"net"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/docker/model-runner/pkg/distribution/types"
 	"github.com/docker/model-runner/pkg/inference"
@@ -37,8 +37,11 @@ func (c *Config) GetArgs(bundle types.ModelBundle, socket string, mode inference
 	modelPath := filepath.Dir(safetensorsPath)
 	args = append(args, "--model-path", modelPath)
 
-	// Add socket arguments
-	args = append(args, "--host", socket)
+	host, port, err := net.SplitHostPort(socket)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse host:port from %q: %w", socket, err)
+	}
+	args = append(args, "--host", host, "--port", port)
 
 	// Add mode-specific arguments
 	switch mode {

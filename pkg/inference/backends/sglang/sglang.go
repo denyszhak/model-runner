@@ -73,6 +73,12 @@ func (s *sglang) UsesExternalModelManagement() bool {
 	return false
 }
 
+// UsesTCP implements inference.Backend.UsesTCP.
+// SGLang only supports TCP, not Unix sockets.
+func (s *sglang) UsesTCP() bool {
+	return true
+}
+
 func (s *sglang) Install(_ context.Context, _ *http.Client) error {
 	if !platform.SupportsSGLang() {
 		return ErrNotImplemented

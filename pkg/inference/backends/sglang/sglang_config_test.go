@@ -68,7 +68,9 @@ func TestGetArgs(t *testing.T) {
 				"--model-path",
 				"/path/to/model",
 				"--host",
-				"/tmp/socket",
+				"127.0.0.1",
+				"--port",
+				"30000",
 			},
 		},
 		{
@@ -86,7 +88,9 @@ func TestGetArgs(t *testing.T) {
 				"--model-path",
 				"/path/to/model",
 				"--host",
-				"/tmp/socket",
+				"127.0.0.1",
+				"--port",
+				"30000",
 				"--context-length",
 				"8192",
 			},
@@ -106,7 +110,9 @@ func TestGetArgs(t *testing.T) {
 				"--model-path",
 				"/path/to/model",
 				"--host",
-				"/tmp/socket",
+				"127.0.0.1",
+				"--port",
+				"30000",
 				"--mem-fraction-static",
 				"0.9",
 			},
@@ -129,7 +135,9 @@ func TestGetArgs(t *testing.T) {
 				"--model-path",
 				"/path/to/model",
 				"--host",
-				"/tmp/socket",
+				"127.0.0.1",
+				"--port",
+				"30000",
 				"--context-length",
 				"16384",
 			},
@@ -147,19 +155,29 @@ func TestGetArgs(t *testing.T) {
 				"--model-path",
 				"/path/to/model",
 				"--host",
-				"/tmp/socket",
+				"127.0.0.1",
+				"--port",
+				"30000",
 				"--is-embedding",
 			},
 		},
 		{
-			name: "reranking mode should error",
+			name: "reranking mode",
 			bundle: &mockModelBundle{
 				safetensorsPath: "/path/to/model/model.safetensors",
 			},
-			mode:        inference.BackendModeReranking,
-			config:      nil,
-			expected:    nil,
-			expectError: true,
+			mode:   inference.BackendModeReranking,
+			config: nil,
+			expected: []string{
+				"-m",
+				"sglang.launch_server",
+				"--model-path",
+				"/path/to/model",
+				"--host",
+				"127.0.0.1",
+				"--port",
+				"30000",
+			},
 		},
 		{
 			name: "combined config with context size and runtime flags",
@@ -177,7 +195,9 @@ func TestGetArgs(t *testing.T) {
 				"--model-path",
 				"/path/to/model",
 				"--host",
-				"/tmp/socket",
+				"127.0.0.1",
+				"--port",
+				"30000",
 				"--context-length",
 				"4096",
 				"--tp-size",
@@ -190,7 +210,7 @@ func TestGetArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := NewDefaultSGLangConfig()
-			args, err := config.GetArgs(tt.bundle, "/tmp/socket", tt.mode, tt.config)
+			args, err := config.GetArgs(tt.bundle, "127.0.0.1:30000", tt.mode, tt.config)
 
 			if tt.expectError {
 				if err == nil {
